@@ -10,6 +10,7 @@ import AdminProducts from "./pages/admin/Products"
 import AdminOrders from "./pages/admin/Orders"
 import AdminOrderDetail from "./pages/admin/OrderDetail"
 import AdminPayments from "./pages/admin/Payments"
+import AdminRefunds from "./pages/admin/Refunds"
 import AdminUsers from "./pages/admin/Users"
 import AdminChat from "./pages/admin/Chat"
 import { SITE_URL } from "./config"
@@ -44,6 +45,7 @@ function AdminApp() {
                 <Route path="orders" element={<AdminOrders />} />
                 <Route path="orders/:id" element={<AdminOrderDetail />} />
                 <Route path="payments" element={<AdminPayments />} />
+                <Route path="refunds" element={<AdminRefunds />} />
                 <Route path="users" element={<AdminUsers />} />
                 <Route path="chat" element={<AdminChat />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
