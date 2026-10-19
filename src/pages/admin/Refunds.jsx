@@ -3,9 +3,11 @@ import { Link } from "react-router-dom"
 import {
   getAllRefunds,
   reviewRefund,
+  receiveReturn,
   completeCodRefund,
 } from "../../api/adminRefunds"
 import { getErrorMessage } from "../../api/client"
+import { getAllPayments } from "../../api/adminPayments"
 
 const STATUS_COLORS = {
   requested: { bg: "#fef3c7", text: "#92400e" },
@@ -38,12 +40,14 @@ function formatDate(value) {
 
 export default function AdminRefunds() {
   const [refunds, setRefunds] = useState([])
+  const [paymentMethods, setPaymentMethods] = useState({})
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [toast, setToast] = useState(null)
   const [selected, setSelected] = useState(null)
   const [adminNote, setAdminNote] = useState("")
+  const [restockable, setRestockable] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
   function showToast(message, type = "success") {
@@ -63,7 +67,23 @@ export default function AdminRefunds() {
         if (!cancelled) setLoading(false)
       }
     }
+
+    async function fetchPaymentMethods() {
+      try {
+        const payments = await getAllPayments()
+        if (cancelled) return
+        const map = {}
+        for (const payment of payments) {
+          map[payment.order_id] = payment.payment_method
+        }
+        setPaymentMethods(map)
+      } catch {
+        // Payment methods are optional; the flow still works without them.
+      }
+    }
+
     fetchRefunds()
+    fetchPaymentMethods()
     return () => {
       cancelled = true
     }
@@ -72,13 +92,34 @@ export default function AdminRefunds() {
   function openReview(refund) {
     setSelected(refund)
     setAdminNote(refund.admin_note || "")
+    setRestockable(true)
+  }
+
+  async function handleReceiveReturn() {
+    if (!selected) return
+    const confirmText = restockable
+      ? "Record the return as resellable? Stock will be added back and the refund will be processed."
+      : "Record the return as NOT resellable? Stock will not be restored and the refund will be processed."
+    if (!window.confirm(confirmText)) return
+
+    setSubmitting(true)
+    try {
+      const updated = await receiveReturn(selected.id, restockable)
+      setRefunds((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      setSelected(updated)
+      showToast(`Return recorded for refund #${updated.id}`)
+    } catch (err) {
+      showToast(getErrorMessage(err), "error")
+    } finally {
+      setSubmitting(false)
+    }
   }
 
   async function handleReview(decision) {
     if (!selected) return
     const confirmText =
       decision === "approve"
-        ? "Approve this refund? Card refunds are sent back to the customer immediately."
+        ? "Approve this refund? Next record the returned product so the money can be sent back."
         : "Reject this refund request?"
     if (!window.confirm(confirmText)) return
 
@@ -127,6 +168,10 @@ export default function AdminRefunds() {
   }
 
   const statuses = [...new Set(refunds.map((r) => r.status))]
+
+  function paymentMethodOf(orderId) {
+    return paymentMethods[orderId] || null
+  }
 
   const filtered = refunds.filter((refund) => {
     const q = search.toLowerCase()
@@ -342,6 +387,12 @@ export default function AdminRefunds() {
                   {STATUS_LABELS[selected.status] || selected.status}
                 </span>
               </div>
+              <div className="profile-field">
+                <span className="profile-field-label">Payment</span>
+                <span className="profile-field-value" style={{ textTransform: "uppercase" }}>
+                  {paymentMethodOf(selected.order_id) || "—"}
+                </span>
+              </div>
               <div className="profile-field" style={{ gridColumn: "1 / -1" }}>
                 <span className="profile-field-label">Reason</span>
                 <span className="profile-field-value">{selected.reason}</span>
@@ -434,26 +485,87 @@ export default function AdminRefunds() {
 
             {selected.status === "approved" && (
               <div style={{ marginTop: 16 }}>
-                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.6, margin: "0 0 12px" }}>
-                  This refund was approved. Once the cash has been returned to the
-                  customer, mark it as completed.
-                </p>
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <button
-                    className="btn btn-sm"
-                    onClick={handleCompleteCod}
-                    disabled={submitting}
-                    style={{
-                      background: "#16a34a",
-                      color: "#fff",
-                      border: "1px solid #16a34a",
-                      cursor: submitting ? "not-allowed" : "pointer",
-                      opacity: submitting ? 0.6 : 1,
-                    }}
-                  >
-                    {submitting ? "Working..." : "Mark COD Refund as Paid"}
-                  </button>
-                </div>
+                {!selected.return_received_at ? (
+                  <>
+                    <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.6, margin: "0 0 12px" }}>
+                      Inspect the returned product, then record the return.
+                      The refund is only processed after the return is
+                      recorded.
+                    </p>
+                    <label
+                      style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "flex-start",
+                        fontSize: "0.9rem",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={restockable}
+                        onChange={(e) => setRestockable(e.target.checked)}
+                        disabled={submitting}
+                        style={{ marginTop: 3 }}
+                      />
+                      <span>
+                        Product is undamaged and can be resold
+                        <br />
+                        <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                          Uncheck if the product is damaged or cannot be restocked.
+                        </span>
+                      </span>
+                    </label>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+                      <button
+                        className="btn btn-sm"
+                        onClick={handleReceiveReturn}
+                        disabled={submitting}
+                        style={{
+                          background: "#4f46e5",
+                          color: "#fff",
+                          border: "1px solid #4f46e5",
+                          cursor: submitting ? "not-allowed" : "pointer",
+                          opacity: submitting ? 0.6 : 1,
+                        }}
+                      >
+                        {submitting ? "Working..." : "Record Return & Process Refund"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.6, margin: "0 0 12px" }}>
+                      Return received {formatDate(selected.return_received_at)}
+                      {" · "}
+                      {selected.return_restockable
+                        ? "restocked into inventory"
+                        : "not restockable"}
+                      .
+                      {paymentMethodOf(selected.order_id) === "card"
+                        ? " The card refund has been sent to Stripe."
+                        : " Return the cash to the customer, then mark the refund as paid."}
+                    </p>
+                    {paymentMethodOf(selected.order_id) !== "card" && (
+                      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                        <button
+                          className="btn btn-sm"
+                          onClick={handleCompleteCod}
+                          disabled={submitting}
+                          style={{
+                            background: "#16a34a",
+                            color: "#fff",
+                            border: "1px solid #16a34a",
+                            cursor: submitting ? "not-allowed" : "pointer",
+                            opacity: submitting ? 0.6 : 1,
+                          }}
+                        >
+                          {submitting ? "Working..." : "Mark COD Refund as Paid"}
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>

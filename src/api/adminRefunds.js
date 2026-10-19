@@ -13,6 +13,13 @@ export async function reviewRefund(refundId, decision, admin_note) {
   return res.data
 }
 
+export async function receiveReturn(refundId, restockable) {
+  const res = await api.post(`/admin/refunds/${refundId}/receive-return`, {
+    restockable,
+  })
+  return res.data
+}
+
 export async function completeCodRefund(refundId) {
   const res = await api.post(`/admin/refunds/${refundId}/complete-cod`)
   return res.data
