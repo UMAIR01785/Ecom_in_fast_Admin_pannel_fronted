@@ -8,7 +8,6 @@ import {
 } from "../../api/categories"
 import { getErrorMessage } from "../../api/client"
 import { convertToWebp } from "../../utils/image"
-import { SITE_URL } from "../../config"
 
 const emptyForm = { name: "", description: "" }
 
@@ -35,6 +34,7 @@ export default function AdminCategories() {
   const [deleting, setDeleting] = useState(false)
 
   const [toast, setToast] = useState(null)
+  const [lightbox, setLightbox] = useState(null)
 
   function showToast(message, type = "success") {
     setToast({ message, type })
@@ -273,7 +273,13 @@ export default function AdminCategories() {
                   <td>
                     <div className="admin-table-category">
                       {cat.image ? (
-                        <img src={cat.image} alt="" className="admin-table-category-img" />
+                        <img
+                          src={cat.image}
+                          alt=""
+                          className="admin-table-category-img"
+                          style={{ cursor: "zoom-in" }}
+                          onClick={() => setLightbox({ image: cat.image, name: cat.name })}
+                        />
                       ) : (
                         <div className="admin-table-category-img admin-table-category-placeholder">
                           {cat.name.charAt(0).toUpperCase()}
@@ -307,15 +313,13 @@ export default function AdminCategories() {
                   </td>
                   <td>
                     <div className="admin-actions" style={{ justifyContent: "flex-end" }}>
-                      <a
-                        href={`${SITE_URL}/${cat.slug}`}
+                      <button
                         className="admin-action-btn"
                         title="View"
-                        target="_blank"
-                        rel="noopener noreferrer"
+                        onClick={() => setLightbox({ image: cat.image, name: cat.name })}
                       >
                         &#128065;
-                      </a>
+                      </button>
                       <button
                         className="admin-action-btn"
                         title="Edit"
@@ -481,6 +485,48 @@ export default function AdminCategories() {
                 {deleting ? "Deleting..." : "Delete"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div
+          className="admin-modal-overlay"
+          onClick={() => setLightbox(null)}
+          style={{ cursor: "zoom-out", background: "rgba(15, 23, 42, 0.8)" }}
+        >
+          <div style={{ textAlign: "center" }}>
+            {lightbox.image ? (
+              <img
+                src={lightbox.image}
+                alt={lightbox.name}
+                style={{
+                  maxWidth: "90vw",
+                  maxHeight: "80vh",
+                  borderRadius: 8,
+                  boxShadow: "0 25px 50px -12px rgba(0,0,0,0.5)",
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  width: 240,
+                  height: 240,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--bg)",
+                  borderRadius: 8,
+                  fontSize: "4rem",
+                  fontWeight: 700,
+                  color: "var(--text-muted)",
+                  margin: "0 auto",
+                }}
+              >
+                {lightbox.name?.charAt(0)?.toUpperCase() || "?"}
+              </div>
+            )}
+            <p style={{ color: "#fff", marginTop: 12, fontWeight: 600 }}>{lightbox.name}</p>
           </div>
         </div>
       )}
