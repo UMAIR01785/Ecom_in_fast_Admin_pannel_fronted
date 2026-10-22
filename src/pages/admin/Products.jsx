@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react"
-import { Link } from "react-router-dom"
 import {
   getProductsAdmin,
   createProduct,
@@ -10,6 +9,7 @@ import { getAllCategories } from "../../api/categories"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
 import { convertToWebp } from "../../utils/image"
+import { SITE_URL } from "../../config"
 
 const emptyForm = {
   name: "",
@@ -358,14 +358,15 @@ export default function AdminProducts() {
                   </td>
                   <td>
                     <div className="admin-actions" style={{ justifyContent: "flex-end" }}>
-                      <Link
-                        to={`/${getCategorySlug(product.category_slugs)}/${product.slug}`}
+                      <a
+                        href={`${SITE_URL}/${getCategorySlug(product.category_slugs)}/${product.slug}`}
                         className="admin-action-btn"
                         title="View"
                         target="_blank"
+                        rel="noopener noreferrer"
                       >
                         &#128065;
-                      </Link>
+                      </a>
                       <button
                         className="admin-action-btn"
                         title="Edit"

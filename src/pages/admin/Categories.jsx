@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import {
   getAllCategories,
   createCategory,
@@ -8,6 +8,7 @@ import {
 } from "../../api/categories"
 import { getErrorMessage } from "../../api/client"
 import { convertToWebp } from "../../utils/image"
+import { SITE_URL } from "../../config"
 
 const emptyForm = { name: "", description: "" }
 
@@ -306,14 +307,15 @@ export default function AdminCategories() {
                   </td>
                   <td>
                     <div className="admin-actions" style={{ justifyContent: "flex-end" }}>
-                      <Link
-                        to={`/${cat.slug}`}
+                      <a
+                        href={`${SITE_URL}/${cat.slug}`}
                         className="admin-action-btn"
                         title="View"
                         target="_blank"
+                        rel="noopener noreferrer"
                       >
                         &#128065;
-                      </Link>
+                      </a>
                       <button
                         className="admin-action-btn"
                         title="Edit"
