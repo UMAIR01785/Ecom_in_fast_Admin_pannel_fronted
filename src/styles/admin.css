@@ -1446,6 +1446,113 @@
   padding: 12px 18px;
 }
 
+/* Product variant size / color summary in the products table */
+.admin-variant-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 110px;
+}
+
+.admin-variant-line {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.admin-variant-line.muted {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.admin-variant-summary-empty {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+/* Products table pagination */
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 28px;
+  border-top: 1px solid var(--border-light);
+}
+
+.admin-pagination-info {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.admin-pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.admin-page-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--white);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.admin-page-btn:hover:not(:disabled):not(.active) {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.admin-page-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: var(--white);
+}
+
+.admin-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-page-ellipsis {
+  padding: 0 3px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* Deactivated-variant toggle inside the variants modal */
+.admin-variant-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 14px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.admin-variant-toggle input {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
 @media (max-width: 640px) {
   .admin-float-chat {
     bottom: 20px;

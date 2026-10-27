@@ -5,8 +5,8 @@ export async function getProducts() {
   return res.data
 }
 
-export async function getProductsAdmin() {
-  const res = await api.get("/products/admin/products")
+export async function getProductsAdmin({ page = 1, limit = 10 } = {}) {
+  const res = await api.get("/products/admin/products", { params: { page, limit } })
   return res.data
 }
 

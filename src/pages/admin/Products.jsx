@@ -6,6 +6,12 @@ import {
   deleteProduct,
 } from "../../api/products"
 import { getAllCategories } from "../../api/categories"
+import {
+  getVariants,
+  createVariant,
+  updateVariant,
+  deleteVariant,
+} from "../../api/productVariants"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
 import { convertToWebp } from "../../utils/image"
@@ -19,12 +25,33 @@ const emptyForm = {
   is_active: true,
 }
 
+const PAGE_SIZE = 10
+
+function getPageItems(current, total) {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => i + 1)
+  }
+
+  const items = [1]
+  const start = Math.max(2, current - 1)
+  const end = Math.min(total - 1, current + 1)
+
+  if (start > 2) items.push("…")
+  for (let i = start; i <= end; i++) items.push(i)
+  if (end < total - 1) items.push("…")
+
+  items.push(total)
+  return items
+}
+
 export default function AdminProducts() {
   const { subscribe } = useAdminOrderSocket()
   const [products, setProducts] = useState([])
   const [categories, setCategories] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState("")
+  const [page, setPage] = useState(1)
+  const [meta, setMeta] = useState({ total: 0, totalPages: 1 })
 
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -47,48 +74,172 @@ export default function AdminProducts() {
   const [toast, setToast] = useState(null)
   const [lightbox, setLightbox] = useState(null)
 
+  const emptyVariantForm = {
+    sku: "",
+    size: "",
+    color: "",
+    price: "",
+    stock: "",
+    is_active: true,
+  }
+
+  const [variantsProduct, setVariantsProduct] = useState(null)
+  const [variants, setVariants] = useState([])
+  const [variantsLoading, setVariantsLoading] = useState(false)
+  const [variantSummaries, setVariantSummaries] = useState({})
+  const variantSummariesRef = useRef({})
+
+  useEffect(() => {
+    variantSummariesRef.current = variantSummaries
+  }, [variantSummaries])
+  const [showVariantForm, setShowVariantForm] = useState(false)
+  const [editingVariantId, setEditingVariantId] = useState(null)
+  const [variantForm, setVariantForm] = useState(emptyVariantForm)
+  const [variantError, setVariantError] = useState("")
+  const [variantSaving, setVariantSaving] = useState(false)
+
+  const [showVariantDeleteModal, setShowVariantDeleteModal] = useState(false)
+  const [deletingVariant, setDeletingVariant] = useState(null)
+  const [deletingVariantBusy, setDeletingVariantBusy] = useState(false)
+  const [showDeactivated, setShowDeactivated] = useState(false)
+
   function showToast(message, type = "success") {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
 
-  async function fetchData() {
-    try {
-      const prodData = await getProductsAdmin()
-      setProducts(prodData)
-    } catch {
-      // silent
-    }
+  function syncVariantSummary(productId, data) {
+    const next = { ...variantSummariesRef.current, [productId]: data }
+    variantSummariesRef.current = next
+    setVariantSummaries(next)
+  }
 
+  async function loadVariantSummaries(items) {
+    const entries = await Promise.all(
+      items.map(async (product) => {
+        try {
+          const data = await getVariants(product.id)
+          return [product.id, data]
+        } catch {
+          return [product.id, []]
+        }
+      })
+    )
+    setVariantSummaries(Object.fromEntries(entries))
+  }
+
+  async function fetchProducts(pageToFetch) {
+    setLoading(true)
+    try {
+      const prodData = await getProductsAdmin({
+        page: pageToFetch,
+        limit: PAGE_SIZE,
+      })
+      const items = Array.isArray(prodData) ? prodData : prodData?.items || []
+      const total = Array.isArray(prodData)
+        ? items.length
+        : Number(prodData?.total ?? items.length) || 0
+      const totalPages = Array.isArray(prodData)
+        ? 1
+        : Number(prodData?.total_pages ?? 1) || 1
+
+      if (items.length === 0 && pageToFetch > 1) {
+        setPage(Math.max(1, Math.min(pageToFetch - 1, totalPages)))
+        return
+      }
+
+      setProducts(items)
+      setMeta({ total, totalPages })
+      loadVariantSummaries(items)
+    } catch {
+      setProducts([])
+      setMeta({ total: 0, totalPages: 1 })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function fetchCategories() {
     try {
       const catData = await getAllCategories()
       setCategories(catData)
     } catch (err) {
       console.error("Failed to load categories:", err)
       showToast("Failed to load categories. " + (err?.response?.data?.detail || err.message), "error")
-    } finally {
-      setLoading(false)
     }
   }
 
+  function fetchData() {
+    fetchProducts(page)
+  }
+
   useEffect(() => {
-    fetchData()
+    fetchCategories()
   }, [])
+
+  useEffect(() => {
+    fetchProducts(page)
+  }, [page])
 
   useEffect(() => {
     return subscribe((message) => {
       if (message?.type !== "inventory_updated") return
+
       const stockById = new Map(
         (message.products || []).map((p) => [p.product_id, p.stock])
       )
-      if (stockById.size === 0) return
-      setProducts((prev) =>
-        prev.map((p) =>
-          stockById.has(p.id) ? { ...p, stock: stockById.get(p.id) } : p
+      if (stockById.size > 0) {
+        setProducts((prev) =>
+          prev.map((p) =>
+            stockById.has(p.id) ? { ...p, stock: stockById.get(p.id) } : p
+          )
         )
-      )
+      }
+
+      const incoming = message.variants || []
+      if (incoming.length === 0) return
+
+      const prev = variantSummariesRef.current
+      const next = { ...prev }
+      const touched = new Map()
+
+      incoming.forEach((v) => {
+        const list = touched.has(v.product_id)
+          ? touched.get(v.product_id)
+          : (prev[v.product_id] ? [...prev[v.product_id]] : [])
+        touched.set(v.product_id, list)
+
+        const normalized = {
+          id: v.variant_id,
+          product_id: v.product_id,
+          sku: v.sku,
+          size: v.size,
+          color: v.color,
+          price: v.price,
+          stock: v.stock,
+          is_active: v.is_active,
+        }
+        const idx = list.findIndex((item) => item.id === normalized.id)
+        if (idx >= 0) list[idx] = normalized
+        else if (normalized.is_active !== false) list.push(normalized)
+      })
+
+      touched.forEach((list, productId) => {
+        next[productId] = [...list].sort(
+          (a, b) =>
+            String(a.size).localeCompare(String(b.size)) ||
+            String(a.color).localeCompare(String(b.color))
+        )
+      })
+
+      variantSummariesRef.current = next
+      setVariantSummaries(next)
+
+      if (variantsProduct && touched.has(variantsProduct.id)) {
+        setVariants(next[variantsProduct.id])
+      }
     })
-  }, [subscribe])
+  }, [subscribe, variantsProduct])
 
   function openCreate() {
     setEditingId(null)
@@ -249,6 +400,150 @@ export default function AdminProducts() {
     }
   }
 
+  async function openVariants(product) {
+    setVariantsProduct(product)
+    setVariants([])
+    setShowVariantForm(false)
+    setEditingVariantId(null)
+    setVariantForm(emptyVariantForm)
+    setVariantError("")
+    setShowDeactivated(false)
+    setVariantsLoading(true)
+    try {
+      const data = await getVariants(product.id)
+      setVariants(data)
+      syncVariantSummary(product.id, data)
+    } catch (err) {
+      showToast(getErrorMessage(err), "error")
+    } finally {
+      setVariantsLoading(false)
+    }
+  }
+
+  function closeVariants() {
+    setVariantsProduct(null)
+    setVariants([])
+    setShowVariantForm(false)
+    setEditingVariantId(null)
+    setVariantForm(emptyVariantForm)
+    setVariantError("")
+    setShowDeactivated(false)
+  }
+
+  function openCreateVariant() {
+    setEditingVariantId(null)
+    setVariantForm(emptyVariantForm)
+    setVariantError("")
+    setShowVariantForm(true)
+  }
+
+  function openEditVariant(variant) {
+    setEditingVariantId(variant.id)
+    setVariantForm({
+      sku: variant.sku,
+      size: variant.size,
+      color: variant.color,
+      price: variant.price != null ? String(variant.price) : "",
+      stock: String(variant.stock),
+      is_active: variant.is_active,
+    })
+    setVariantError("")
+    setShowVariantForm(true)
+  }
+
+  function cancelVariantForm() {
+    setShowVariantForm(false)
+    setEditingVariantId(null)
+    setVariantForm(emptyVariantForm)
+    setVariantError("")
+  }
+
+  function handleVariantFormChange(e) {
+    setVariantForm({ ...variantForm, [e.target.name]: e.target.value })
+  }
+
+  async function handleVariantSubmit(e) {
+    e.preventDefault()
+    setVariantError("")
+
+    if (!variantForm.sku.trim()) {
+      setVariantError("SKU is required.")
+      return
+    }
+    if (!variantForm.size.trim()) {
+      setVariantError("Size is required.")
+      return
+    }
+    if (!variantForm.color.trim()) {
+      setVariantError("Color is required.")
+      return
+    }
+    if (variantForm.stock === "" || Number(variantForm.stock) < 0) {
+      setVariantError("Stock is required and cannot be negative.")
+      return
+    }
+    if (variantForm.price !== "" && Number(variantForm.price) <= 0) {
+      setVariantError("Price must be greater than 0, or left empty to inherit the product price.")
+      return
+    }
+
+    setVariantSaving(true)
+    try {
+      const payload = {
+        sku: variantForm.sku.trim(),
+        size: variantForm.size.trim(),
+        color: variantForm.color.trim(),
+        price: variantForm.price === "" ? null : Number(variantForm.price),
+        stock: Number(variantForm.stock),
+        is_active: variantForm.is_active,
+      }
+
+      if (editingVariantId) {
+        await updateVariant(variantsProduct.id, editingVariantId, payload)
+        showToast("Variant updated successfully")
+      } else {
+        await createVariant(variantsProduct.id, payload)
+        showToast("Variant created successfully")
+      }
+
+      cancelVariantForm()
+      const data = await getVariants(variantsProduct.id)
+      setVariants(data)
+      syncVariantSummary(variantsProduct.id, data)
+    } catch (err) {
+      setVariantError(getErrorMessage(err))
+    } finally {
+      setVariantSaving(false)
+    }
+  }
+
+  function openVariantDeleteModal(variant) {
+    setDeletingVariant(variant)
+    setShowVariantDeleteModal(true)
+  }
+
+  function closeVariantDeleteModal() {
+    setShowVariantDeleteModal(false)
+    setDeletingVariant(null)
+  }
+
+  async function handleVariantDelete() {
+    if (!deletingVariant || !variantsProduct) return
+    setDeletingVariantBusy(true)
+    try {
+      await deleteVariant(variantsProduct.id, deletingVariant.id)
+      showToast("Variant deactivated successfully")
+      closeVariantDeleteModal()
+      const data = await getVariants(variantsProduct.id)
+      setVariants(data)
+      syncVariantSummary(variantsProduct.id, data)
+    } catch (err) {
+      showToast(getErrorMessage(err), "error")
+    } finally {
+      setDeletingVariantBusy(false)
+    }
+  }
+
   function getCategoryName(categorySlugs) {
     return categorySlugs
       ?.map((slug) => categories.find((category) => category.slug === slug)?.name)
@@ -261,6 +556,11 @@ export default function AdminProducts() {
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       p.slug.toLowerCase().includes(search.toLowerCase())
   )
+
+  const deactivatedVariantCount = variants.filter((v) => !v.is_active).length
+  const visibleVariants = showDeactivated
+    ? variants
+    : variants.filter((v) => v.is_active)
 
   return (
     <div>
@@ -276,7 +576,11 @@ export default function AdminProducts() {
 
       <div className="admin-table-wrapper">
         <div className="admin-table-header">
-          <h2>All Products ({filtered.length})</h2>
+          <h2>
+            {search
+              ? `Search results (${filtered.length})`
+              : `All Products (${meta.total})`}
+          </h2>
           <div className="admin-table-search">
             <span className="search-icon">&#128269;</span>
             <input
@@ -310,6 +614,7 @@ export default function AdminProducts() {
               <tr>
                 <th>Product</th>
                 <th>Category</th>
+                <th>Variants</th>
                 <th>Price</th>
                 <th>Stock</th>
                 <th>Status</th>
@@ -317,7 +622,15 @@ export default function AdminProducts() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((product) => (
+              {filtered.map((product) => {
+                const summary = variantSummaries[product.id]
+                const activeVariants = summary
+                  ? summary.filter((v) => v.is_active)
+                  : []
+                const sizes = [...new Set(activeVariants.map((v) => v.size))]
+                const colors = [...new Set(activeVariants.map((v) => v.color))]
+
+                return (
                 <tr key={product.id}>
                   <td>
                     <div className="admin-table-category">
@@ -342,6 +655,22 @@ export default function AdminProducts() {
                   </td>
                   <td style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
                     {getCategoryName(product.category_slugs)}
+                  </td>
+                  <td>
+                    {!summary ? (
+                      <span className="admin-variant-summary-empty">&mdash;</span>
+                    ) : activeVariants.length === 0 ? (
+                      <span className="admin-variant-summary-empty">None</span>
+                    ) : (
+                      <div className="admin-variant-summary">
+                        <span className="admin-variant-line">
+                          {sizes.join(", ")}
+                        </span>
+                        <span className="admin-variant-line muted">
+                          {colors.join(", ")}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td style={{ fontWeight: 600 }}>
                     Rs {Number(product.price).toFixed(2)}
@@ -369,6 +698,13 @@ export default function AdminProducts() {
                       </button>
                       <button
                         className="admin-action-btn"
+                        title="Variants"
+                        onClick={() => openVariants(product)}
+                      >
+                        &#9638;
+                      </button>
+                      <button
+                        className="admin-action-btn"
                         title="Edit"
                         onClick={() => openEdit(product)}
                       >
@@ -384,9 +720,55 @@ export default function AdminProducts() {
                     </div>
                   </td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
+          </div>
+        )}
+
+        {!loading && !search && meta.total > 0 && (
+          <div className="admin-pagination">
+            <span className="admin-pagination-info">
+              Showing {(page - 1) * PAGE_SIZE + 1}&ndash;{Math.min(page * PAGE_SIZE, meta.total)} of {meta.total} products
+            </span>
+
+            {meta.totalPages > 1 && (
+              <div className="admin-pagination-pages">
+                <button
+                  type="button"
+                  className="admin-page-btn"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  &larr; Prev
+                </button>
+
+                {getPageItems(page, meta.totalPages).map((item, idx) =>
+                  item === "…" ? (
+                    <span key={`gap-${idx}`} className="admin-page-ellipsis">…</span>
+                  ) : (
+                    <button
+                      key={item}
+                      type="button"
+                      className={`admin-page-btn ${page === item ? "active" : ""}`}
+                      onClick={() => setPage(item)}
+                    >
+                      {item}
+                    </button>
+                  )
+                )}
+
+                <button
+                  type="button"
+                  className="admin-page-btn"
+                  disabled={page >= meta.totalPages}
+                  onClick={() => setPage((p) => Math.min(meta.totalPages, p + 1))}
+                >
+                  Next &rarr;
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -581,6 +963,289 @@ export default function AdminProducts() {
                 disabled={deleting}
               >
                 {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {variantsProduct && (
+        <div className="admin-modal-overlay" onClick={closeVariants}>
+          <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <h2>
+                Variants — <span style={{ color: "var(--text-muted)" }}>{variantsProduct.name}</span>
+              </h2>
+              <button className="admin-modal-close" onClick={closeVariants}>
+                &times;
+              </button>
+            </div>
+
+            <div className="admin-modal-body">
+              {variantError && <div className="alert alert-error">{variantError}</div>}
+
+              {showVariantForm && (
+                <form onSubmit={handleVariantSubmit} style={{ marginBottom: "1.25rem" }}>
+                  <div className="admin-form-row">
+                    <div className="admin-form-group">
+                      <label htmlFor="var-sku">SKU *</label>
+                      <input
+                        id="var-sku"
+                        name="sku"
+                        type="text"
+                        placeholder="e.g. TEE-BLK-L"
+                        value={variantForm.sku}
+                        onChange={handleVariantFormChange}
+                        required
+                      />
+                    </div>
+                    <div className="admin-form-group">
+                      <label htmlFor="var-size">Size *</label>
+                      <input
+                        id="var-size"
+                        name="size"
+                        type="text"
+                        placeholder="e.g. L"
+                        value={variantForm.size}
+                        onChange={handleVariantFormChange}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="admin-form-row">
+                    <div className="admin-form-group">
+                      <label htmlFor="var-color">Color *</label>
+                      <input
+                        id="var-color"
+                        name="color"
+                        type="text"
+                        placeholder="e.g. Black"
+                        value={variantForm.color}
+                        onChange={handleVariantFormChange}
+                        required
+                      />
+                    </div>
+                    <div className="admin-form-group">
+                      <label htmlFor="var-price">Price (PKR)</label>
+                      <input
+                        id="var-price"
+                        name="price"
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        placeholder="Empty = product price"
+                        value={variantForm.price}
+                        onChange={handleVariantFormChange}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="admin-form-row">
+                    <div className="admin-form-group">
+                      <label htmlFor="var-stock">Stock *</label>
+                      <input
+                        id="var-stock"
+                        name="stock"
+                        type="number"
+                        min="0"
+                        placeholder="0"
+                        value={variantForm.stock}
+                        onChange={handleVariantFormChange}
+                        required
+                      />
+                    </div>
+                    <div className="admin-form-group">
+                      <label htmlFor="var-active">Status</label>
+                      <label className="admin-form-checkbox">
+                        <input
+                          id="var-active"
+                          type="checkbox"
+                          checked={variantForm.is_active}
+                          onChange={(e) =>
+                            setVariantForm({ ...variantForm, is_active: e.target.checked })
+                          }
+                        />
+                        <span>{variantForm.is_active ? "Active" : "Inactive"}</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      className="btn btn-outline btn-sm"
+                      onClick={cancelVariantForm}
+                      disabled={variantSaving}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-sm"
+                      disabled={variantSaving}
+                    >
+                      {variantSaving ? "Saving..." : editingVariantId ? "Save Changes" : "Create Variant"}
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {variantsLoading ? (
+                <div className="admin-table-empty">
+                  <div className="admin-loading-spinner" />
+                  <p>Loading variants...</p>
+                </div>
+              ) : variants.length === 0 && !showVariantForm ? (
+                <div className="admin-table-empty">
+                  <div className="admin-empty-icon">&#9638;</div>
+                  <p>No variants yet for this product.</p>
+                  <button className="btn btn-primary btn-sm" onClick={openCreateVariant}>
+                    + Add First Variant
+                  </button>
+                </div>
+              ) : visibleVariants.length === 0 && !showVariantForm ? (
+                <div className="admin-table-empty">
+                  <div className="admin-empty-icon">&#9638;</div>
+                  <p>All variants for this product are deactivated.</p>
+                  <button
+                    className="btn btn-outline btn-sm"
+                    onClick={() => setShowDeactivated(true)}
+                  >
+                    Show deactivated ({deactivatedVariantCount})
+                  </button>
+                </div>
+              ) : (
+                <>
+                {deactivatedVariantCount > 0 && (
+                  <label className="admin-variant-toggle">
+                    <input
+                      type="checkbox"
+                      checked={showDeactivated}
+                      onChange={(e) => setShowDeactivated(e.target.checked)}
+                    />
+                    Show deactivated ({deactivatedVariantCount})
+                  </label>
+                )}
+                <div className="admin-table-wrapper">
+                  <div className="admin-table-scroll">
+                    <table className="admin-table">
+                      <thead>
+                        <tr>
+                          <th>SKU</th>
+                          <th>Size</th>
+                          <th>Color</th>
+                          <th>Price</th>
+                          <th>Stock</th>
+                          <th>Status</th>
+                          <th style={{ textAlign: "right" }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visibleVariants.map((variant) => (
+                          <tr key={variant.id}>
+                            <td style={{ fontWeight: 600 }}>{variant.sku}</td>
+                            <td>{variant.size}</td>
+                            <td>{variant.color}</td>
+                            <td>
+                              {variant.price != null
+                                ? `Rs ${Number(variant.price).toFixed(2)}`
+                                : (
+                                  <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
+                                    Rs {Number(variantsProduct.price).toFixed(2)}*
+                                  </span>
+                                )}
+                            </td>
+                            <td>
+                              <span className={`status-badge ${variant.stock > 0 ? "active" : "inactive"}`}>
+                                <span className="status-badge-dot" />
+                                {variant.stock}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`status-badge ${variant.is_active ? "active" : "inactive"}`}>
+                                <span className="status-badge-dot" />
+                                {variant.is_active ? "Active" : "Inactive"}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="admin-actions" style={{ justifyContent: "flex-end" }}>
+                                <button
+                                  className="admin-action-btn"
+                                  title="Edit Variant"
+                                  onClick={() => openEditVariant(variant)}
+                                >
+                                  &#9998;
+                                </button>
+                                <button
+                                  className="admin-action-btn danger"
+                                  title="Deactivate Variant"
+                                  onClick={() => openVariantDeleteModal(variant)}
+                                >
+                                  &#128465;
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                </>
+              )}
+            </div>
+
+            <div className="admin-modal-footer">
+              {!showVariantForm && (
+                <button className="btn btn-primary btn-sm" onClick={openCreateVariant}>
+                  + Add Variant
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={closeVariants}
+                disabled={variantSaving}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showVariantDeleteModal && deletingVariant && (
+        <div className="admin-modal-overlay" onClick={closeVariantDeleteModal}>
+          <div className="admin-modal admin-modal-sm" onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <h2>Deactivate Variant</h2>
+              <button className="admin-modal-close" onClick={closeVariantDeleteModal}>
+                &times;
+              </button>
+            </div>
+            <div className="admin-modal-body">
+              <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", lineHeight: 1.6 }}>
+                Deactivate variant <strong style={{ color: "var(--text)" }}>{deletingVariant.sku}</strong>?
+                It will no longer be purchasable. Inventory history is kept.
+              </p>
+            </div>
+            <div className="admin-modal-footer">
+              <button
+                type="button"
+                className="btn btn-outline btn-sm"
+                onClick={closeVariantDeleteModal}
+                disabled={deletingVariantBusy}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-sm"
+                onClick={handleVariantDelete}
+                disabled={deletingVariantBusy}
+              >
+                {deletingVariantBusy ? "Deactivating..." : "Deactivate"}
               </button>
             </div>
           </div>

@@ -378,6 +378,39 @@ export default function AdminOrderDetail() {
                 <div style={{ fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {item.product_name || item.product?.name || `Product #${item.product_id}`}
                 </div>
+                {(item.variant_size || item.variant_color || item.variant_sku) && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, margin: "3px 0" }}>
+                    {item.variant_size && (
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        fontSize: "0.72rem",
+                        fontWeight: 600,
+                        background: "var(--primary-light, #fff3e0)",
+                        color: "var(--primary-dark, #e65100)",
+                      }}>
+                        Size: {item.variant_size}
+                      </span>
+                    )}
+                    {item.variant_color && (
+                      <span style={{
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        fontSize: "0.72rem",
+                        fontWeight: 600,
+                        background: "var(--primary-light, #fff3e0)",
+                        color: "var(--primary-dark, #e65100)",
+                      }}>
+                        Color: {item.variant_color}
+                      </span>
+                    )}
+                    {item.variant_sku && (
+                      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", alignSelf: "center" }}>
+                        {item.variant_sku}
+                      </span>
+                    )}
+                  </div>
+                )}
                 <div style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
                   Qty: {item.quantity} x Rs {Number(item.unit_price).toFixed(2)}
                 </div>
