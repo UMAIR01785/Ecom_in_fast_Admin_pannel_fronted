@@ -692,6 +692,7 @@
 
 .admin-form-group input[type="text"],
 .admin-form-group input[type="email"],
+.admin-form-group input[type="datetime-local"],
 .admin-form-group textarea {
   width: 100%;
   padding: 12px 16px;
@@ -705,6 +706,7 @@
 }
 
 .admin-form-group input:focus,
+.admin-form-group input[type="datetime-local"]:focus,
 .admin-form-group textarea:focus {
   outline: none;
   border-color: var(--primary);

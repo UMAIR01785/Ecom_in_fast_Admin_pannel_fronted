@@ -7,6 +7,7 @@ import Login from "./pages/Login"
 import Dashboard from "./pages/admin/Dashboard"
 import AdminCategories from "./pages/admin/Categories"
 import AdminProducts from "./pages/admin/Products"
+import AdminInventoryLot from "./pages/admin/inventory_lot"
 import AdminOrders from "./pages/admin/Orders"
 import AdminOrderDetail from "./pages/admin/OrderDetail"
 import AdminPayments from "./pages/admin/Payments"
@@ -42,6 +43,7 @@ function AdminApp() {
                 <Route index element={<Dashboard />} />
                 <Route path="categories" element={<AdminCategories />} />
                 <Route path="products" element={<AdminProducts />} />
+                <Route path="inventory-lot" element={<AdminInventoryLot />} />
                 <Route path="orders" element={<AdminOrders />} />
                 <Route path="orders/:id" element={<AdminOrderDetail />} />
                 <Route path="payments" element={<AdminPayments />} />

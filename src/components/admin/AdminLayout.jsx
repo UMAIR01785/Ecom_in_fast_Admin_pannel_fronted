@@ -9,6 +9,7 @@ const links = [
   { to: "/", label: "Dashboard", icon: "\u25A6", end: true },
   { to: "/categories", label: "Categories", icon: "\u2630" },
   { to: "/products", label: "Products", icon: "\u2630" },
+  { to: "/inventory-lot", label: "Inventory Lots", icon: "\u2630" },
   { to: "/orders", label: "Orders", icon: "\u2630" },
   { to: "/payments", label: "Payments", icon: "\u2630" },
   { to: "/refunds", label: "Refunds", icon: "\u21A9" },
