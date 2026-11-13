@@ -1,7 +1,10 @@
 import axios from "axios"
 
+const apiUrl = import.meta.env.VITE_API_URL?.trim()
+const isProductionApiConfigured = Boolean(apiUrl) || import.meta.env.DEV
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || "http://localhost:8000",
+  baseURL: apiUrl || "http://localhost:8000",
   withCredentials: true,
 })
 
@@ -19,6 +22,14 @@ function processQueue(error, token = null) {
 const AUTH_PATHS = ["/accounts/login", "/accounts/refresh", "/accounts/logout"]
 
 api.interceptors.request.use((config) => {
+  if (!isProductionApiConfigured) {
+    const error = new Error(
+      "The admin API is not configured. Set VITE_API_URL to the public backend URL."
+    )
+    error.code = "API_NOT_CONFIGURED"
+    return Promise.reject(error)
+  }
+
   const token = localStorage.getItem("ecom_token")
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -70,11 +81,15 @@ api.interceptors.response.use(
 )
 
 export function getErrorMessage(error) {
+  if (error?.code === "API_NOT_CONFIGURED") {
+    return "The admin service is temporarily unavailable. Please try again later."
+  }
+
   const detail = error?.response?.data?.detail
 
   if (!detail) {
     return error?.message === "Network Error"
-      ? "Cannot connect to the server. Is the backend running?"
+      ? "We could not connect to the service. Please try again shortly."
       : "Something went wrong. Please try again."
   }
 

@@ -4,7 +4,9 @@ import { useAuth } from "./AuthContext"
 const AdminOrderSocketContext = createContext(null)
 
 function getAdminOrdersWsUrl(token) {
-  const base = import.meta.env.VITE_API_URL || "http://localhost:8000"
+  const base = import.meta.env.VITE_API_URL?.trim() || (
+    import.meta.env.DEV ? "http://localhost:8000" : window.location.origin
+  )
   const wsBase = base.replace(/^http/, "ws")
   return `${wsBase}/ws/admin/orders?token=${encodeURIComponent(token)}`
 }
