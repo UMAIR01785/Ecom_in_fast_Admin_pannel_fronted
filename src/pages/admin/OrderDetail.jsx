@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
-import { getOrderDetail, updateOrderStatus } from "../../api/adminOrders"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
+import { useQueryClient } from "@tanstack/react-query"
+import { queryKeys } from "../../api/queryKeys"
+import {
+  useAdminOrder,
+  useUpdateOrderStatus,
+} from "../../hooks/useOrderQueries"
 
 const ALLOWED_TRANSITIONS = {
   pending: ["confirmed", "cancelled"],
@@ -33,9 +38,12 @@ export default function AdminOrderDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { subscribe, connected } = useAdminOrderSocket()
-  const [order, setOrder] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState("")
+  const queryClient = useQueryClient()
+  const orderQuery = useAdminOrder(id)
+  const updateStatusMutation = useUpdateOrderStatus()
+  const order = orderQuery.data ?? null
+  const loading = orderQuery.isPending
+  const error = orderQuery.isError ? getErrorMessage(orderQuery.error) : ""
   const [updating, setUpdating] = useState(false)
   const [toast, setToast] = useState(null)
 
@@ -49,7 +57,9 @@ export default function AdminOrderDetail() {
       if (message?.type === "order_cancelled") {
         const { order_id: orderId, status } = message
         if (String(orderId) !== String(id)) return
-        setOrder((prev) => (prev ? { ...prev, status } : prev))
+        queryClient.setQueryData(queryKeys.orders.detail(orderId), (prev) =>
+          prev ? { ...prev, status } : prev
+        )
         showToast(`Order #${orderId} was cancelled by customer`)
         return
       }
@@ -59,33 +69,17 @@ export default function AdminOrderDetail() {
       const { order_id: orderId, status } = message.data || {}
       if (String(orderId) !== String(id)) return
 
-      setOrder((prev) => (prev ? { ...prev, status } : prev))
+      queryClient.setQueryData(queryKeys.orders.detail(orderId), (prev) =>
+        prev ? { ...prev, status } : prev
+      )
     })
-  }, [subscribe, id])
-
-  useEffect(() => {
-    let cancelled = false
-    async function fetchOrder() {
-      try {
-        const data = await getOrderDetail(id)
-        if (!cancelled) setOrder(data)
-      } catch (err) {
-        if (!cancelled) setError(getErrorMessage(err))
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    fetchOrder()
-    return () => { cancelled = true }
-  }, [id])
+  }, [subscribe, id, queryClient])
 
   async function handleStatusChange(newStatus) {
     setUpdating(true)
     try {
-      await updateOrderStatus(order.id, newStatus)
+      await updateStatusMutation.mutateAsync({ orderId: order.id, status: newStatus })
       showToast(`Status updated to ${newStatus}`)
-      const data = await getOrderDetail(id)
-      setOrder(data)
     } catch (err) {
       showToast(getErrorMessage(err), "error")
     } finally {

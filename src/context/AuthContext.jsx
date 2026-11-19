@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import api from "../api/client"
+import { queryClient } from "../lib/queryClient"
 
 const AuthContext = createContext(null)
 
@@ -22,6 +23,8 @@ export function AuthProvider({ children }) {
     function handleSessionExpired() {
       setToken(null)
       setUser(null)
+      // Drop every cached response so no account data survives a session expiry
+      queryClient.clear()
     }
     window.addEventListener("auth:session-expired", handleSessionExpired)
     return () => window.removeEventListener("auth:session-expired", handleSessionExpired)
@@ -64,6 +67,8 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password) => {
     const res = await api.post("/accounts/login", { email, password })
+    // Never carry another account's cached data into a new session
+    queryClient.clear()
     setToken(res.data.access_token)
 
     // Fetch profile with the new token
@@ -94,6 +99,8 @@ export function AuthProvider({ children }) {
       setToken(null)
       setUser(null)
       localStorage.removeItem("ecom_user")
+      // Clear all cached queries (profile, orders, reports, ...) on logout
+      queryClient.clear()
     }
   }, [])
 

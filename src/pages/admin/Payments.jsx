@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
-import { getAllPayments, getPayment } from "../../api/adminPayments"
 import { getErrorMessage } from "../../api/client"
+import { useAllPayments, usePayment } from "../../hooks/usePaymentQueries"
 
 const STATUS_COLORS = {
   pending: { bg: "#fef3c7", text: "#92400e" },
@@ -22,48 +22,32 @@ const ORDER_STATUS_COLORS = {
 }
 
 export default function AdminPayments() {
-  const [payments, setPayments] = useState([])
-  const [loading, setLoading] = useState(true)
+  const paymentsQuery = useAllPayments()
+  const payments = paymentsQuery.data ?? []
+  const loading = paymentsQuery.isPending
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [toast, setToast] = useState(null)
-  const [selected, setSelected] = useState(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-
-  function showToast(message, type = "success") {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }
+  const [selectedId, setSelectedId] = useState(null)
+  const paymentQuery = usePayment(selectedId, { enabled: selectedId !== null })
+  const selected = paymentQuery.data ?? null
+  const detailLoading = selectedId !== null && paymentQuery.isPending
 
   useEffect(() => {
-    let cancelled = false
-    async function fetchPayments() {
-      try {
-        const data = await getAllPayments()
-        if (!cancelled) setPayments(data)
-      } catch (err) {
-        if (!cancelled) showToast(getErrorMessage(err), "error")
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    fetchPayments()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    if (!paymentsQuery.isError) return
+    setToast({ message: getErrorMessage(paymentsQuery.error), type: "error" })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [paymentsQuery.isError, paymentsQuery.error])
 
-  async function openDetail(paymentId) {
-    setDetailLoading(true)
-    setSelected(null)
-    try {
-      const data = await getPayment(paymentId)
-      setSelected(data)
-    } catch (err) {
-      showToast(getErrorMessage(err), "error")
-    } finally {
-      setDetailLoading(false)
-    }
+  useEffect(() => {
+    if (!paymentQuery.isError) return
+    setToast({ message: getErrorMessage(paymentQuery.error), type: "error" })
+    setSelectedId(null)
+  }, [paymentQuery.isError, paymentQuery.error])
+
+  function openDetail(paymentId) {
+    setSelectedId(paymentId)
   }
 
   const statuses = [...new Set(payments.map((p) => p.payment_status))]
@@ -245,7 +229,7 @@ export default function AdminPayments() {
         )}
       </div>
 
-      {(selected || detailLoading) && (
+      {selectedId !== null && (
         <div
           style={{
             position: "fixed",
@@ -257,7 +241,7 @@ export default function AdminPayments() {
             zIndex: 1000,
             padding: 20,
           }}
-          onClick={() => !detailLoading && setSelected(null)}
+          onClick={() => !detailLoading && setSelectedId(null)}
         >
           <div
             className="profile-card"
@@ -271,7 +255,7 @@ export default function AdminPayments() {
               <button
                 className="admin-action-btn"
                 title="Close"
-                onClick={() => setSelected(null)}
+                onClick={() => setSelectedId(null)}
                 disabled={detailLoading}
               >
                 &#10005;

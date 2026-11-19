@@ -1,35 +1,20 @@
 import { useEffect, useState } from "react"
-import { getAllUsers } from "../../api/adminUsers"
 import { getErrorMessage } from "../../api/client"
+import { useAllUsers } from "../../hooks/useUserQueries"
 
 export default function AdminUsers() {
-  const [users, setUsers] = useState([])
-  const [loading, setLoading] = useState(true)
+  const usersQuery = useAllUsers()
+  const users = usersQuery.data ?? []
+  const loading = usersQuery.isPending
   const [search, setSearch] = useState("")
   const [toast, setToast] = useState(null)
 
-  function showToast(message, type = "success") {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }
-
   useEffect(() => {
-    let cancelled = false
-    async function fetchUsers() {
-      try {
-        const data = await getAllUsers()
-        if (!cancelled) setUsers(data)
-      } catch (err) {
-        if (!cancelled) showToast(getErrorMessage(err), "error")
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-    fetchUsers()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    if (!usersQuery.isError) return
+    setToast({ message: getErrorMessage(usersQuery.error), type: "error" })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [usersQuery.isError, usersQuery.error])
 
   const filtered = users.filter((user) => {
     const q = search.toLowerCase()

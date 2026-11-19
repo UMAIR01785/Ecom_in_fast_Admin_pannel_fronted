@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
-import { getAllOrders, updateOrderStatus } from "../../api/adminOrders"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
 import { addressLine, addressSearchText } from "../../utils/orderAddress"
+import { queryKeys } from "../../api/queryKeys"
+import { useQueryClient } from "@tanstack/react-query"
+import { useAllOrders, useUpdateOrderStatus } from "../../hooks/useOrderQueries"
 
 const ALLOWED_TRANSITIONS = {
   pending: ["confirmed", "cancelled"],
@@ -25,8 +27,11 @@ const STATUS_COLORS = {
 
 export default function AdminOrders() {
   const { subscribe, connected } = useAdminOrderSocket()
-  const [orders, setOrders] = useState([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
+  const ordersQuery = useAllOrders()
+  const updateStatusMutation = useUpdateOrderStatus()
+  const orders = ordersQuery.data ?? []
+  const loading = ordersQuery.isPending
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [toast, setToast] = useState(null)
@@ -38,30 +43,35 @@ export default function AdminOrders() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  async function fetchOrders() {
-    try {
-      const data = await getAllOrders()
-      setOrders(data)
-    } catch (err) {
-      showToast(getErrorMessage(err), "error")
-    } finally {
-      setLoading(false)
-    }
-  }
+  useEffect(() => {
+    if (!ordersQuery.isError) return
+    setToast({ message: getErrorMessage(ordersQuery.error), type: "error" })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [ordersQuery.isError, ordersQuery.error])
 
   useEffect(() => {
+    function applyStatusPatch(orderId, status) {
+      queryClient.setQueryData(queryKeys.orders.lists(), (prev) =>
+        Array.isArray(prev)
+          ? prev.map((o) => (o.id === orderId ? { ...o, status } : o))
+          : prev
+      )
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.orders.detail(orderId),
+      })
+    }
+
     return subscribe((message) => {
       if (message?.type === "new_order" || message?.event === "order_created") {
-        fetchOrders()
+        queryClient.invalidateQueries({ queryKey: queryKeys.orders.all })
         showToast(`New order #${message.order_id} received`)
         return
       }
 
       if (message?.type === "order_cancelled") {
         const { order_id: orderId, status } = message
-        setOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, status } : o))
-        )
+        applyStatusPatch(orderId, status)
         setHighlightId(orderId)
         setTimeout(() => setHighlightId(null), 3000)
         showToast(`Order #${orderId} was cancelled by customer`)
@@ -70,23 +80,16 @@ export default function AdminOrders() {
 
       if (message?.event === "order_status_updated") {
         const { order_id: orderId, status } = message.data || {}
-        setOrders((prev) =>
-          prev.map((o) => (o.id === orderId ? { ...o, status } : o))
-        )
+        applyStatusPatch(orderId, status)
       }
     })
-  }, [subscribe])
-
-  useEffect(() => {
-    fetchOrders()
-  }, [])
+  }, [subscribe, queryClient])
 
   async function handleStatusChange(orderId, newStatus) {
     setUpdatingId(orderId)
     try {
-      await updateOrderStatus(orderId, newStatus)
+      await updateStatusMutation.mutateAsync({ orderId, status: newStatus })
       showToast(`Order #${orderId} status updated to ${newStatus}`)
-      await fetchOrders()
     } catch (err) {
       showToast(getErrorMessage(err), "error")
     } finally {

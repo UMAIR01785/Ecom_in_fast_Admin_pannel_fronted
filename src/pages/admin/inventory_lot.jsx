@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
-import {
-  getInventoryLots,
-  getInventoryLot,
-  receiveInventoryLot,
-} from "../../api/inventory_lot"
-import { getProductsAdmin } from "../../api/products"
-import { getVariants } from "../../api/productVariants"
+import { useEffect, useMemo, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
+import { queryKeys } from "../../api/queryKeys"
+import {
+  useInventoryLots,
+  useInventoryLot,
+  useReceiveInventoryLot,
+} from "../../hooks/useInventoryQueries"
+import { useInventoryCatalog } from "../../hooks/useCatalogQueries"
 
 const PAGE_SIZE = 20
 
@@ -44,98 +45,66 @@ const EMPTY_FORM = {
   expires_at: "",
 }
 
+const EMPTY_PRODUCTS = []
+const EMPTY_MAP = {}
+
 export default function AdminInventoryLot() {
   const { subscribe } = useAdminOrderSocket()
+  const queryClient = useQueryClient()
 
-  const [lots, setLots] = useState([])
-  const [loading, setLoading] = useState(true)
   const [skip, setSkip] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
   const [search, setSearch] = useState("")
   const [toast, setToast] = useState(null)
 
-  const [products, setProducts] = useState([])
-  const [productMap, setProductMap] = useState({})
-  const [variantMap, setVariantMap] = useState({})
+  const lotsQuery = useInventoryLots({ skip, limit: PAGE_SIZE })
+  const catalogQuery = useInventoryCatalog()
+  const receiveMutation = useReceiveInventoryLot()
+
+  const lots = lotsQuery.data ?? []
+  const loading = lotsQuery.isPending || lotsQuery.isPlaceholderData
+  const hasMore = lots.length === PAGE_SIZE
+  const products = catalogQuery.data?.products ?? EMPTY_PRODUCTS
+  const productMap = catalogQuery.data?.productMap ?? EMPTY_MAP
+  const variantMap = catalogQuery.data?.variantMap ?? EMPTY_MAP
+  const saving = receiveMutation.isPending
 
   const [showReceive, setShowReceive] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState("")
 
-  const [detail, setDetail] = useState(null)
-  const [detailLoading, setDetailLoading] = useState(false)
+  const [detailId, setDetailId] = useState(null)
+  const [detailSeed, setDetailSeed] = useState(null)
+  const detailQuery = useInventoryLot(detailId, { enabled: detailId !== null })
+  const detail = detailQuery.data ?? detailSeed
+  const detailLoading = detailId !== null && detailQuery.isPending
 
   function showToast(message, type = "success") {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
 
-  const fetchLots = useCallback(async (nextSkip = 0) => {
-    setLoading(true)
-    try {
-      const data = await getInventoryLots({
-        skip: nextSkip,
-        limit: PAGE_SIZE,
-      })
-      setLots(data)
-      setHasMore(data.length === PAGE_SIZE)
-    } catch (err) {
-      setLots([])
-      setHasMore(false)
-      showToast(getErrorMessage(err), "error")
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  const loadCatalog = useCallback(async () => {
-    try {
-      const all = []
-      for (let page = 1; page <= 5; page += 1) {
-        const data = await getProductsAdmin({ page, limit: 100 })
-        const items = Array.isArray(data) ? data : data?.items || []
-        all.push(...items)
-        const totalPages = Array.isArray(data)
-          ? 1
-          : Number(data?.total_pages ?? 1) || 1
-        if (page >= totalPages || items.length === 0) break
-      }
-
-      const variantLists = await Promise.all(
-        all.map(async (product) => {
-          try {
-            return await getVariants(product.id)
-          } catch {
-            return []
-          }
-        })
-      )
-
-      const pMap = {}
-      const vMap = {}
-      for (const product of all) pMap[product.id] = product
-      for (const variant of variantLists.flat()) vMap[variant.id] = variant
-
-      setProducts(all)
-      setProductMap(pMap)
-      setVariantMap(vMap)
-    } catch {
-      setProducts([])
-    }
-  }, [])
+  useEffect(() => {
+    if (!lotsQuery.isError) return
+    setToast({ message: getErrorMessage(lotsQuery.error), type: "error" })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [lotsQuery.isError, lotsQuery.error])
 
   useEffect(() => {
-    fetchLots(0)
-    loadCatalog()
-  }, [fetchLots, loadCatalog])
+    if (!detailQuery.isError) return
+    setToast({ message: getErrorMessage(detailQuery.error), type: "error" })
+    setDetailId(null)
+    setDetailSeed(null)
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [detailQuery.isError, detailQuery.error])
 
   useEffect(() => {
     return subscribe((message) => {
       if (message?.type !== "inventory_updated") return
-      fetchLots(skip)
+      queryClient.invalidateQueries({ queryKey: queryKeys.inventory.all })
     })
-  }, [subscribe, fetchLots, skip])
+  }, [subscribe, queryClient])
 
   function ownerLabel(lot) {
     if (lot.variant_id) {
@@ -226,9 +195,8 @@ export default function AdminInventoryLot() {
       payload.product_id = Number(form.product_id)
     }
 
-    setSaving(true)
     try {
-      await receiveInventoryLot(payload)
+      await receiveMutation.mutateAsync(payload)
       setShowReceive(false)
       setForm(EMPTY_FORM)
       showToast(
@@ -236,37 +204,27 @@ export default function AdminInventoryLot() {
           quantity === 1 ? "" : "s"
         } added to stock`
       )
-      fetchLots(skip)
     } catch (err) {
       setFormError(getErrorMessage(err))
-    } finally {
-      setSaving(false)
     }
   }
 
-  async function openDetail(lot) {
-    setDetail(lot)
-    setDetailLoading(true)
-    try {
-      const fresh = await getInventoryLot(lot.id)
-      setDetail(fresh)
-    } catch (err) {
-      showToast(getErrorMessage(err), "error")
-    } finally {
-      setDetailLoading(false)
-    }
+  function openDetail(lot) {
+    setDetailSeed(lot)
+    setDetailId(lot.id)
+  }
+
+  function closeDetail() {
+    setDetailId(null)
+    setDetailSeed(null)
   }
 
   function goToPrev() {
-    const next = Math.max(0, skip - PAGE_SIZE)
-    setSkip(next)
-    fetchLots(next)
+    setSkip(Math.max(0, skip - PAGE_SIZE))
   }
 
   function goToNext() {
-    const next = skip + PAGE_SIZE
-    setSkip(next)
-    fetchLots(next)
+    setSkip(skip + PAGE_SIZE)
   }
 
   const detailStatus = detail ? expiryStatus(detail.expires_at) : null
@@ -638,14 +596,14 @@ export default function AdminInventoryLot() {
       {detail && (
         <div
           className="admin-modal-overlay"
-          onClick={() => !detailLoading && setDetail(null)}
+          onClick={() => !detailLoading && closeDetail()}
         >
           <div className="admin-modal" onClick={(e) => e.stopPropagation()}>
             <div className="admin-modal-header">
               <h2>Lot #{detail.id}</h2>
               <button
                 className="admin-modal-close"
-                onClick={() => setDetail(null)}
+                onClick={() => closeDetail()}
                 disabled={detailLoading}
               >
                 &times;
@@ -735,7 +693,7 @@ export default function AdminInventoryLot() {
               <button
                 type="button"
                 className="btn btn-outline btn-sm"
-                onClick={() => setDetail(null)}
+                onClick={() => closeDetail()}
                 disabled={detailLoading}
               >
                 Close

@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import {
-  getAllCategories,
-  createCategory,
-  updateCategory,
-  deleteCategory,
-} from "../../api/categories"
 import { getErrorMessage } from "../../api/client"
 import { convertToWebp } from "../../utils/image"
+import {
+  useAllCategories,
+  useCreateCategory,
+  useUpdateCategory,
+  useDeleteCategory,
+} from "../../hooks/useCatalogQueries"
 
 const emptyForm = { name: "", description: "" }
 
 export default function AdminCategories() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [categories, setCategories] = useState([])
-  const [loading, setLoading] = useState(true)
+  const categoriesQuery = useAllCategories()
+  const createMutation = useCreateCategory()
+  const updateMutation = useUpdateCategory()
+  const deleteMutation = useDeleteCategory()
+  const categories = categoriesQuery.data ?? []
+  const loading = categoriesQuery.isPending
   const [search, setSearch] = useState("")
 
   const [showModal, setShowModal] = useState(false)
@@ -25,13 +29,13 @@ export default function AdminCategories() {
   const [preview, setPreview] = useState(null)
   const [existingImage, setExistingImage] = useState(null)
   const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
+  const saving = createMutation.isPending || updateMutation.isPending
   const fileInputRef = useRef(null)
 
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deletingSlug, setDeletingSlug] = useState(null)
   const [deletingName, setDeletingName] = useState("")
-  const [deleting, setDeleting] = useState(false)
+  const deleting = deleteMutation.isPending
 
   const [toast, setToast] = useState(null)
   const [lightbox, setLightbox] = useState(null)
@@ -40,21 +44,6 @@ export default function AdminCategories() {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
-
-  async function fetchCategories() {
-    try {
-      const data = await getAllCategories()
-      setCategories(data)
-    } catch {
-      // silent
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    fetchCategories()
-  }, [])
 
   useEffect(() => {
     if (searchParams.get("create") === "true") {
@@ -133,8 +122,6 @@ export default function AdminCategories() {
       return
     }
 
-    setSaving(true)
-
     try {
       const formData = new FormData()
       formData.append("name", form.name.trim())
@@ -152,19 +139,19 @@ export default function AdminCategories() {
       }
 
       if (editingSlug) {
-        await updateCategory(editingSlug, formData)
+        await updateMutation.mutateAsync({
+          slug: editingSlug,
+          formData,
+        })
         showToast("Category updated successfully")
       } else {
-        await createCategory(formData)
+        await createMutation.mutateAsync(formData)
         showToast("Category created successfully")
       }
 
       closeModal()
-      fetchCategories()
     } catch (err) {
       setError(getErrorMessage(err))
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -173,9 +160,8 @@ export default function AdminCategories() {
       const formData = new FormData()
       formData.append("is_active", !cat.is_active)
 
-      await updateCategory(cat.slug, formData)
+      await updateMutation.mutateAsync({ slug: cat.slug, formData })
       showToast(`Category ${cat.is_active ? "deactivated" : "activated"}`)
-      fetchCategories()
     } catch (err) {
       showToast(getErrorMessage(err), "error")
     }
@@ -195,16 +181,12 @@ export default function AdminCategories() {
 
   async function handleDelete() {
     if (!deletingSlug) return
-    setDeleting(true)
     try {
-      await deleteCategory(deletingSlug)
+      await deleteMutation.mutateAsync(deletingSlug)
       showToast("Category deleted successfully")
       closeDeleteModal()
-      fetchCategories()
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setDeleting(false)
     }
   }
 

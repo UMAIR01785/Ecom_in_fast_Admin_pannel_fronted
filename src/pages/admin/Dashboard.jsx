@@ -1,27 +1,14 @@
-import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
 import ReportsSection from "../../components/admin/ReportsSection"
-import { getAllRefunds } from "../../api/adminRefunds"
+import { useAllRefunds } from "../../hooks/useRefundQueries"
 
 export default function Dashboard() {
   const { user } = useAuth()
-  const [pendingRefunds, setPendingRefunds] = useState([])
-
-  useEffect(() => {
-    let cancelled = false
-    async function fetchRefunds() {
-      try {
-        const data = await getAllRefunds()
-        if (cancelled) return
-        setPendingRefunds(data.filter((r) => r.status === "requested"))
-      } catch {
-        // not critical
-      }
-    }
-    fetchRefunds()
-    return () => { cancelled = true }
-  }, [])
+  const refundsQuery = useAllRefunds()
+  const pendingRefunds = (refundsQuery.data ?? []).filter(
+    (r) => r.status === "requested"
+  )
 
   return (
     <div>

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react"
+import { useEffect, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
 import {
   Area,
   AreaChart,
@@ -17,15 +18,16 @@ import {
   ShoppingCart,
   Users,
 } from "lucide-react"
-import {
-  getReportInventory,
-  getReportOverview,
-  getReportPayments,
-  getReportSales,
-  getReportTopProducts,
-} from "../../api/adminReports"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
+import { queryKeys } from "../../api/queryKeys"
+import {
+  useReportOverview,
+  useReportSales,
+  useReportTopProducts,
+  useReportPayments,
+  useReportInventory,
+} from "../../hooks/useReportQueries"
 import { Badge } from "../../components/ui/badge"
 import {
   Card,
@@ -140,52 +142,50 @@ function StatCard({ title, value, icon: Icon, hint }) {
 
 export default function ReportsSection() {
   const { subscribe } = useAdminOrderSocket()
+  const queryClient = useQueryClient()
   const [startDate, setStartDate] = useState("")
   const [endDate, setEndDate] = useState("")
   const [threshold, setThreshold] = useState("5")
   const [query, setQuery] = useState({ startDate: "", endDate: "", threshold: 5 })
-
-  const [overview, setOverview] = useState(null)
-  const [sales, setSales] = useState(null)
-  const [topProducts, setTopProducts] = useState([])
-  const [payments, setPayments] = useState(null)
-  const [inventory, setInventory] = useState(null)
-  const [loading, setLoading] = useState(true)
   const [toast, setToast] = useState(null)
+
+  const overviewQuery = useReportOverview(query)
+  const salesQuery = useReportSales(query)
+  const topProductsQuery = useReportTopProducts({ ...query, limit: 10 })
+  const paymentsQuery = useReportPayments(query)
+  const inventoryQuery = useReportInventory({
+    threshold: query.threshold,
+    limit: 20,
+  })
+
+  const overview = overviewQuery.data ?? null
+  const sales = salesQuery.data ?? null
+  const topProducts = topProductsQuery.data?.products || []
+  const payments = paymentsQuery.data ?? null
+  const inventory = inventoryQuery.data ?? null
+  const loading =
+    overviewQuery.isPending ||
+    salesQuery.isPending ||
+    topProductsQuery.isPending ||
+    paymentsQuery.isPending ||
+    inventoryQuery.isPending
 
   function showToast(message, type = "error") {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
 
-  const load = useCallback(async (q) => {
-    setLoading(true)
-    const results = await Promise.allSettled([
-      getReportOverview(q),
-      getReportSales(q),
-      getReportTopProducts({ ...q, limit: 10 }),
-      getReportPayments(q),
-      getReportInventory({ threshold: q.threshold, limit: 20 }),
-    ])
-
-    const [ov, sl, tp, pay, inv] = results
-    if (ov.status === "fulfilled") {
-      setOverview(ov.value)
-      setStartDate(ov.value.start_date)
-      setEndDate(ov.value.end_date)
-    } else {
-      showToast(getErrorMessage(ov.reason))
-    }
-    if (sl.status === "fulfilled") setSales(sl.value)
-    if (tp.status === "fulfilled") setTopProducts(tp.value.products || [])
-    if (pay.status === "fulfilled") setPayments(pay.value)
-    if (inv.status === "fulfilled") setInventory(inv.value)
-    setLoading(false)
-  }, [])
-
   useEffect(() => {
-    load(query)
-  }, [load, query])
+    if (!overviewQuery.isError) return
+    showToast(getErrorMessage(overviewQuery.error))
+  }, [overviewQuery.isError, overviewQuery.error])
+
+  // Keep the date inputs in sync with the range the server actually used
+  useEffect(() => {
+    if (!overview) return
+    setStartDate(overview.start_date)
+    setEndDate(overview.end_date)
+  }, [overview])
 
   useEffect(() => {
     return subscribe((message) => {
@@ -194,27 +194,9 @@ export default function ReportsSection() {
         (message.products || []).map((p) => [p.product_id, p.stock])
       )
       if (stockById.size === 0) return
-      setTopProducts((prev) =>
-        prev.map((p) =>
-          stockById.has(p.product_id)
-            ? { ...p, current_stock: stockById.get(p.product_id) }
-            : p
-        )
-      )
-      setInventory((prev) =>
-        prev
-          ? {
-              ...prev,
-              low_stock_products: prev.low_stock_products.map((p) =>
-                stockById.has(p.product_id)
-                  ? { ...p, stock: stockById.get(p.product_id) }
-                  : p
-              ),
-            }
-          : prev
-      )
+      queryClient.invalidateQueries({ queryKey: queryKeys.reports.all })
     })
-  }, [subscribe])
+  }, [subscribe, queryClient])
 
   function applyFilters(e) {
     e?.preventDefault()

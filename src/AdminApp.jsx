@@ -1,4 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
+import { QueryClientProvider } from "@tanstack/react-query"
+import { ReactQueryDevtools } from "@tanstack/react-query-devtools"
+import { queryClient } from "./lib/queryClient"
 import { AuthProvider, useAuth } from "./context/AuthContext"
 import { AdminOrderSocketProvider } from "./context/AdminOrderSocketContext"
 import { AdminChatProvider } from "./context/AdminChatContext"
@@ -25,38 +28,43 @@ function AdminRoute({ children }) {
 
 function AdminApp() {
   return (
-    <AuthProvider>
-      <AdminOrderSocketProvider>
-        <AdminChatProvider>
-          <BrowserRouter>
-            <Routes>
-              <Route path="/login" element={<Login />} />
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <AdminOrderSocketProvider>
+          <AdminChatProvider>
+            <BrowserRouter>
+              <Routes>
+                <Route path="/login" element={<Login />} />
 
-              <Route
-                path="/"
-                element={
-                  <AdminRoute>
-                    <AdminLayout />
-                  </AdminRoute>
-                }
-              >
-                <Route index element={<Dashboard />} />
-                <Route path="categories" element={<AdminCategories />} />
-                <Route path="products" element={<AdminProducts />} />
-                <Route path="inventory-lot" element={<AdminInventoryLot />} />
-                <Route path="orders" element={<AdminOrders />} />
-                <Route path="orders/:id" element={<AdminOrderDetail />} />
-                <Route path="payments" element={<AdminPayments />} />
-                <Route path="refunds" element={<AdminRefunds />} />
-                <Route path="users" element={<AdminUsers />} />
-                <Route path="chat" element={<AdminChat />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Route>
-            </Routes>
-          </BrowserRouter>
-        </AdminChatProvider>
-      </AdminOrderSocketProvider>
-    </AuthProvider>
+                <Route
+                  path="/"
+                  element={
+                    <AdminRoute>
+                      <AdminLayout />
+                    </AdminRoute>
+                  }
+                >
+                  <Route index element={<Dashboard />} />
+                  <Route path="categories" element={<AdminCategories />} />
+                  <Route path="products" element={<AdminProducts />} />
+                  <Route path="inventory-lot" element={<AdminInventoryLot />} />
+                  <Route path="orders" element={<AdminOrders />} />
+                  <Route path="orders/:id" element={<AdminOrderDetail />} />
+                  <Route path="payments" element={<AdminPayments />} />
+                  <Route path="refunds" element={<AdminRefunds />} />
+                  <Route path="users" element={<AdminUsers />} />
+                  <Route path="chat" element={<AdminChat />} />
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Route>
+              </Routes>
+            </BrowserRouter>
+          </AdminChatProvider>
+        </AdminOrderSocketProvider>
+      </AuthProvider>
+      {import.meta.env.DEV && (
+        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-right" />
+      )}
+    </QueryClientProvider>
   )
 }
 

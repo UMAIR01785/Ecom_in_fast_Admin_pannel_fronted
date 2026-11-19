@@ -1,20 +1,21 @@
-import { useEffect, useRef, useState } from "react"
-import {
-  getProductsAdmin,
-  createProduct,
-  updateProduct,
-  deleteProduct,
-} from "../../api/products"
-import { getAllCategories } from "../../api/categories"
-import {
-  getVariants,
-  createVariant,
-  updateVariant,
-  deleteVariant,
-} from "../../api/productVariants"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { useQueries, useQueryClient } from "@tanstack/react-query"
+import { getVariants } from "../../api/productVariants"
 import { getErrorMessage } from "../../api/client"
 import { useAdminOrderSocket } from "../../context/AdminOrderSocketContext"
 import { convertToWebp } from "../../utils/image"
+import { queryKeys } from "../../api/queryKeys"
+import {
+  useAdminProducts,
+  useAllCategories,
+  useCreateProduct,
+  useUpdateProduct,
+  useDeleteProduct,
+  useVariants,
+  useCreateVariant,
+  useUpdateVariant,
+  useDeleteVariant,
+} from "../../hooks/useCatalogQueries"
 
 const emptyForm = {
   name: "",
@@ -26,6 +27,8 @@ const emptyForm = {
 }
 
 const PAGE_SIZE = 10
+
+const EMPTY_ITEMS = []
 
 function getPageItems(current, total) {
   if (total <= 7) {
@@ -46,12 +49,35 @@ function getPageItems(current, total) {
 
 export default function AdminProducts() {
   const { subscribe } = useAdminOrderSocket()
-  const [products, setProducts] = useState([])
-  const [categories, setCategories] = useState([])
-  const [loading, setLoading] = useState(true)
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState("")
   const [page, setPage] = useState(1)
-  const [meta, setMeta] = useState({ total: 0, totalPages: 1 })
+
+  const productsQuery = useAdminProducts({ page, limit: PAGE_SIZE })
+  const categoriesQuery = useAllCategories()
+  const createMutation = useCreateProduct()
+  const updateMutation = useUpdateProduct()
+  const deleteMutation = useDeleteProduct()
+  const createVariantMutation = useCreateVariant()
+  const updateVariantMutation = useUpdateVariant()
+  const deleteVariantMutation = useDeleteVariant()
+
+  const productsPage = Array.isArray(productsQuery.data)
+    ? {
+        items: productsQuery.data,
+        total: productsQuery.data.length,
+        total_pages: 1,
+      }
+    : productsQuery.data || null
+  const products = productsPage?.items || EMPTY_ITEMS
+  const meta = {
+    total: Number(productsPage?.total ?? products.length) || 0,
+    totalPages: Number(productsPage?.total_pages ?? 1) || 1,
+  }
+  const loading = productsQuery.isPending || productsQuery.isPlaceholderData
+  const categories = categoriesQuery.data ?? []
+  const saving = createMutation.isPending || updateMutation.isPending
+  const deleting = deleteMutation.isPending
 
   const [showModal, setShowModal] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -62,14 +88,12 @@ export default function AdminProducts() {
   const [preview, setPreview] = useState(null)
   const [existingImage, setExistingImage] = useState(null)
   const [error, setError] = useState("")
-  const [saving, setSaving] = useState(false)
   const fileInputRef = useRef(null)
 
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [deletingCategorySlug, setDeletingCategorySlug] = useState(null)
   const [deletingProductSlug, setDeletingProductSlug] = useState(null)
   const [deletingName, setDeletingName] = useState("")
-  const [deleting, setDeleting] = useState(false)
 
   const [toast, setToast] = useState(null)
   const [lightbox, setLightbox] = useState(null)
@@ -84,102 +108,74 @@ export default function AdminProducts() {
   }
 
   const [variantsProduct, setVariantsProduct] = useState(null)
-  const [variants, setVariants] = useState([])
-  const [variantsLoading, setVariantsLoading] = useState(false)
-  const [variantSummaries, setVariantSummaries] = useState({})
-  const variantSummariesRef = useRef({})
-
-  useEffect(() => {
-    variantSummariesRef.current = variantSummaries
-  }, [variantSummaries])
   const [showVariantForm, setShowVariantForm] = useState(false)
   const [editingVariantId, setEditingVariantId] = useState(null)
   const [variantForm, setVariantForm] = useState(emptyVariantForm)
   const [variantError, setVariantError] = useState("")
-  const [variantSaving, setVariantSaving] = useState(false)
+  const variantSaving =
+    createVariantMutation.isPending || updateVariantMutation.isPending
 
   const [showVariantDeleteModal, setShowVariantDeleteModal] = useState(false)
   const [deletingVariant, setDeletingVariant] = useState(null)
-  const [deletingVariantBusy, setDeletingVariantBusy] = useState(false)
+  const deletingVariantBusy = deleteVariantMutation.isPending
   const [showDeactivated, setShowDeactivated] = useState(false)
+
+  // Variant summaries for the products on the current page.
+  // Shares cache keys with the variants modal, so both stay in sync.
+  const summaryResults = useQueries({
+    queries: products.map((product) => ({
+      queryKey: queryKeys.variants.byProduct(product.id),
+      queryFn: () => getVariants(product.id),
+      staleTime: 5 * 60_000,
+      gcTime: 30 * 60_000,
+    })),
+  })
+  const variantSummaries = useMemo(() => {
+    const map = {}
+    products.forEach((product, index) => {
+      map[product.id] = summaryResults[index]?.data ?? []
+    })
+    return map
+  }, [products, summaryResults])
+
+  // Variants modal data (same cache key as the summaries above)
+  const variantsQuery = useVariants(variantsProduct?.id, {
+    enabled: variantsProduct !== null,
+  })
+  const variants = variantsQuery.data ?? []
+  const variantsLoading = variantsProduct !== null && variantsQuery.isPending
 
   function showToast(message, type = "success") {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
 
-  function syncVariantSummary(productId, data) {
-    const next = { ...variantSummariesRef.current, [productId]: data }
-    variantSummariesRef.current = next
-    setVariantSummaries(next)
-  }
-
-  async function loadVariantSummaries(items) {
-    const entries = await Promise.all(
-      items.map(async (product) => {
-        try {
-          const data = await getVariants(product.id)
-          return [product.id, data]
-        } catch {
-          return [product.id, []]
-        }
-      })
-    )
-    setVariantSummaries(Object.fromEntries(entries))
-  }
-
-  async function fetchProducts(pageToFetch) {
-    setLoading(true)
-    try {
-      const prodData = await getProductsAdmin({
-        page: pageToFetch,
-        limit: PAGE_SIZE,
-      })
-      const items = Array.isArray(prodData) ? prodData : prodData?.items || []
-      const total = Array.isArray(prodData)
-        ? items.length
-        : Number(prodData?.total ?? items.length) || 0
-      const totalPages = Array.isArray(prodData)
-        ? 1
-        : Number(prodData?.total_pages ?? 1) || 1
-
-      if (items.length === 0 && pageToFetch > 1) {
-        setPage(Math.max(1, Math.min(pageToFetch - 1, totalPages)))
-        return
-      }
-
-      setProducts(items)
-      setMeta({ total, totalPages })
-      loadVariantSummaries(items)
-    } catch {
-      setProducts([])
-      setMeta({ total: 0, totalPages: 1 })
-    } finally {
-      setLoading(false)
+  // If the current page no longer exists (e.g. items deleted), step back
+  useEffect(() => {
+    if (!productsQuery.isSuccess || productsQuery.isPlaceholderData) return
+    const items = Array.isArray(productsQuery.data)
+      ? productsQuery.data
+      : productsQuery.data?.items || []
+    const totalPages = Array.isArray(productsQuery.data)
+      ? 1
+      : Number(productsQuery.data?.total_pages ?? 1) || 1
+    if (items.length === 0 && page > 1) {
+      setPage(Math.max(1, Math.min(page - 1, totalPages)))
     }
-  }
-
-  async function fetchCategories() {
-    try {
-      const catData = await getAllCategories()
-      setCategories(catData)
-    } catch (err) {
-      console.error("Failed to load categories:", err)
-      showToast("Failed to load categories. " + (err?.response?.data?.detail || err.message), "error")
-    }
-  }
-
-  function fetchData() {
-    fetchProducts(page)
-  }
+  }, [productsQuery.data, productsQuery.isSuccess, productsQuery.isPlaceholderData, page])
 
   useEffect(() => {
-    fetchCategories()
-  }, [])
-
-  useEffect(() => {
-    fetchProducts(page)
-  }, [page])
+    if (!categoriesQuery.isError) return
+    setToast({
+      message:
+        "Failed to load categories. " +
+        (categoriesQuery.error?.response?.data?.detail ||
+          categoriesQuery.error?.message),
+      type: "error",
+    })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [categoriesQuery.isError, categoriesQuery.error])
 
   useEffect(() => {
     return subscribe((message) => {
@@ -189,24 +185,39 @@ export default function AdminProducts() {
         (message.products || []).map((p) => [p.product_id, p.stock])
       )
       if (stockById.size > 0) {
-        setProducts((prev) =>
-          prev.map((p) =>
+        const patchList = (list) =>
+          list.map((p) =>
             stockById.has(p.id) ? { ...p, stock: stockById.get(p.id) } : p
           )
+        queryClient.setQueriesData(
+          { queryKey: queryKeys.products.adminLists() },
+          (prev) => {
+            if (Array.isArray(prev)) return patchList(prev)
+            if (prev && Array.isArray(prev.items)) {
+              return { ...prev, items: patchList(prev.items) }
+            }
+            return prev
+          }
         )
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.products.catalog(),
+        })
       }
 
       const incoming = message.variants || []
       if (incoming.length === 0) return
 
-      const prev = variantSummariesRef.current
-      const next = { ...prev }
       const touched = new Map()
 
       incoming.forEach((v) => {
+        const cached = queryClient.getQueryData(
+          queryKeys.variants.byProduct(v.product_id)
+        )
+        if (!Array.isArray(cached)) return
+
         const list = touched.has(v.product_id)
           ? touched.get(v.product_id)
-          : (prev[v.product_id] ? [...prev[v.product_id]] : [])
+          : [...cached]
         touched.set(v.product_id, list)
 
         const normalized = {
@@ -225,21 +236,15 @@ export default function AdminProducts() {
       })
 
       touched.forEach((list, productId) => {
-        next[productId] = [...list].sort(
+        const sorted = [...list].sort(
           (a, b) =>
             String(a.size).localeCompare(String(b.size)) ||
             String(a.color).localeCompare(String(b.color))
         )
+        queryClient.setQueryData(queryKeys.variants.byProduct(productId), sorted)
       })
-
-      variantSummariesRef.current = next
-      setVariantSummaries(next)
-
-      if (variantsProduct && touched.has(variantsProduct.id)) {
-        setVariants(next[variantsProduct.id])
-      }
     })
-  }, [subscribe, variantsProduct])
+  }, [subscribe, queryClient])
 
   function openCreate() {
     setEditingId(null)
@@ -333,8 +338,6 @@ export default function AdminProducts() {
       return
     }
 
-    setSaving(true)
-
     try {
       const formData = new FormData()
       formData.append("name", form.name.trim())
@@ -355,19 +358,20 @@ export default function AdminProducts() {
       }
 
       if (editingCategorySlug && editingProductSlug) {
-        await updateProduct(editingCategorySlug, editingProductSlug, formData)
+        await updateMutation.mutateAsync({
+          categorySlug: editingCategorySlug,
+          productSlug: editingProductSlug,
+          formData,
+        })
         showToast("Product updated successfully")
       } else {
-        await createProduct(formData)
+        await createMutation.mutateAsync(formData)
         showToast("Product created successfully")
       }
 
       closeModal()
-      fetchData()
     } catch (err) {
       setError(getErrorMessage(err))
-    } finally {
-      setSaving(false)
     }
   }
 
@@ -387,42 +391,29 @@ export default function AdminProducts() {
 
   async function handleDelete() {
     if (!deletingCategorySlug || !deletingProductSlug) return
-    setDeleting(true)
     try {
-      await deleteProduct(deletingCategorySlug, deletingProductSlug)
+      await deleteMutation.mutateAsync({
+        categorySlug: deletingCategorySlug,
+        productSlug: deletingProductSlug,
+      })
       showToast("Product deleted successfully")
       closeDeleteModal()
-      fetchData()
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setDeleting(false)
     }
   }
 
-  async function openVariants(product) {
+  function openVariants(product) {
     setVariantsProduct(product)
-    setVariants([])
     setShowVariantForm(false)
     setEditingVariantId(null)
     setVariantForm(emptyVariantForm)
     setVariantError("")
     setShowDeactivated(false)
-    setVariantsLoading(true)
-    try {
-      const data = await getVariants(product.id)
-      setVariants(data)
-      syncVariantSummary(product.id, data)
-    } catch (err) {
-      showToast(getErrorMessage(err), "error")
-    } finally {
-      setVariantsLoading(false)
-    }
   }
 
   function closeVariants() {
     setVariantsProduct(null)
-    setVariants([])
     setShowVariantForm(false)
     setEditingVariantId(null)
     setVariantForm(emptyVariantForm)
@@ -487,7 +478,6 @@ export default function AdminProducts() {
       return
     }
 
-    setVariantSaving(true)
     try {
       const payload = {
         sku: variantForm.sku.trim(),
@@ -499,21 +489,23 @@ export default function AdminProducts() {
       }
 
       if (editingVariantId) {
-        await updateVariant(variantsProduct.id, editingVariantId, payload)
+        await updateVariantMutation.mutateAsync({
+          productId: variantsProduct.id,
+          variantId: editingVariantId,
+          payload,
+        })
         showToast("Variant updated successfully")
       } else {
-        await createVariant(variantsProduct.id, payload)
+        await createVariantMutation.mutateAsync({
+          productId: variantsProduct.id,
+          payload,
+        })
         showToast("Variant created successfully")
       }
 
       cancelVariantForm()
-      const data = await getVariants(variantsProduct.id)
-      setVariants(data)
-      syncVariantSummary(variantsProduct.id, data)
     } catch (err) {
       setVariantError(getErrorMessage(err))
-    } finally {
-      setVariantSaving(false)
     }
   }
 
@@ -529,18 +521,15 @@ export default function AdminProducts() {
 
   async function handleVariantDelete() {
     if (!deletingVariant || !variantsProduct) return
-    setDeletingVariantBusy(true)
     try {
-      await deleteVariant(variantsProduct.id, deletingVariant.id)
+      await deleteVariantMutation.mutateAsync({
+        productId: variantsProduct.id,
+        variantId: deletingVariant.id,
+      })
       showToast("Variant deactivated successfully")
       closeVariantDeleteModal()
-      const data = await getVariants(variantsProduct.id)
-      setVariants(data)
-      syncVariantSummary(variantsProduct.id, data)
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setDeletingVariantBusy(false)
     }
   }
 

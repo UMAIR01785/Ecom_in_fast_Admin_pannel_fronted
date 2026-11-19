@@ -1,13 +1,13 @@
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
-import {
-  getAllRefunds,
-  reviewRefund,
-  receiveReturn,
-  completeCodRefund,
-} from "../../api/adminRefunds"
 import { getErrorMessage } from "../../api/client"
-import { getAllPayments } from "../../api/adminPayments"
+import {
+  useAllRefunds,
+  useReviewRefund,
+  useReceiveReturn,
+  useCompleteCodRefund,
+} from "../../hooks/useRefundQueries"
+import { useAllPayments } from "../../hooks/usePaymentQueries"
 
 const STATUS_COLORS = {
   requested: { bg: "#fef3c7", text: "#92400e" },
@@ -39,16 +39,31 @@ function formatDate(value) {
 }
 
 export default function AdminRefunds() {
-  const [refunds, setRefunds] = useState([])
-  const [paymentMethods, setPaymentMethods] = useState({})
-  const [loading, setLoading] = useState(true)
+  const refundsQuery = useAllRefunds()
+  const paymentsQuery = useAllPayments()
+  const reviewMutation = useReviewRefund()
+  const receiveMutation = useReceiveReturn()
+  const codMutation = useCompleteCodRefund()
+
+  const refunds = refundsQuery.data ?? []
+  const loading = refundsQuery.isPending
+  const submitting =
+    reviewMutation.isPending || receiveMutation.isPending || codMutation.isPending
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [toast, setToast] = useState(null)
   const [selected, setSelected] = useState(null)
   const [adminNote, setAdminNote] = useState("")
   const [restockable, setRestockable] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
+
+  // Order -> payment method map, shared with the Payments page cache
+  const paymentMethods = useMemo(() => {
+    const map = {}
+    for (const payment of paymentsQuery.data ?? []) {
+      map[payment.order_id] = payment.payment_method
+    }
+    return map
+  }, [paymentsQuery.data])
 
   function showToast(message, type = "success") {
     setToast({ message, type })
@@ -56,38 +71,11 @@ export default function AdminRefunds() {
   }
 
   useEffect(() => {
-    let cancelled = false
-    async function fetchRefunds() {
-      try {
-        const data = await getAllRefunds()
-        if (!cancelled) setRefunds(data)
-      } catch (err) {
-        if (!cancelled) showToast(getErrorMessage(err), "error")
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    async function fetchPaymentMethods() {
-      try {
-        const payments = await getAllPayments()
-        if (cancelled) return
-        const map = {}
-        for (const payment of payments) {
-          map[payment.order_id] = payment.payment_method
-        }
-        setPaymentMethods(map)
-      } catch {
-        // Payment methods are optional; the flow still works without them.
-      }
-    }
-
-    fetchRefunds()
-    fetchPaymentMethods()
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    if (!refundsQuery.isError) return
+    setToast({ message: getErrorMessage(refundsQuery.error), type: "error" })
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [refundsQuery.isError, refundsQuery.error])
 
   function openReview(refund) {
     setSelected(refund)
@@ -102,16 +90,15 @@ export default function AdminRefunds() {
       : "Record the return as NOT resellable? Stock will not be restored and the refund will be processed."
     if (!window.confirm(confirmText)) return
 
-    setSubmitting(true)
     try {
-      const updated = await receiveReturn(selected.id, restockable)
-      setRefunds((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      const updated = await receiveMutation.mutateAsync({
+        refundId: selected.id,
+        restockable,
+      })
       setSelected(updated)
       showToast(`Return recorded for refund #${updated.id}`)
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setSubmitting(false)
     }
   }
 
@@ -123,14 +110,12 @@ export default function AdminRefunds() {
         : "Reject this refund request?"
     if (!window.confirm(confirmText)) return
 
-    setSubmitting(true)
     try {
-      const updated = await reviewRefund(
-        selected.id,
+      const updated = await reviewMutation.mutateAsync({
+        refundId: selected.id,
         decision,
-        adminNote.trim() || null
-      )
-      setRefunds((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+        adminNote: adminNote.trim() || null,
+      })
       setSelected(null)
       setAdminNote("")
       showToast(
@@ -140,8 +125,6 @@ export default function AdminRefunds() {
       )
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setSubmitting(false)
     }
   }
 
@@ -154,16 +137,12 @@ export default function AdminRefunds() {
     )
       return
 
-    setSubmitting(true)
     try {
-      const updated = await completeCodRefund(selected.id)
-      setRefunds((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      const updated = await codMutation.mutateAsync(selected.id)
       setSelected(null)
       showToast(`Refund #${updated.id} marked as completed`)
     } catch (err) {
       showToast(getErrorMessage(err), "error")
-    } finally {
-      setSubmitting(false)
     }
   }
 

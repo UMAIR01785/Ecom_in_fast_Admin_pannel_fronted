@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react"
 import { NavLink, Outlet, useNavigate } from "react-router-dom"
 import { useAuth } from "../../context/AuthContext"
 import { useAdminChat } from "../../context/AdminChatContext"
-import { getAllRefunds } from "../../api/adminRefunds"
+import { useAllRefunds } from "../../hooks/useRefundQueries"
 import FloatingChatWidget from "./FloatingChatWidget"
 
 const links = [
@@ -21,28 +20,13 @@ export default function AdminLayout() {
   const { user, logout } = useAuth()
   const { queue, sending } = useAdminChat()
   const navigate = useNavigate()
-  const [pendingRefunds, setPendingRefunds] = useState(0)
 
-  useEffect(() => {
-    let cancelled = false
-    async function fetchPending() {
-      try {
-        const data = await getAllRefunds()
-        if (cancelled) return
-        setPendingRefunds(
-          data.filter((r) => r.status === "requested").length
-        )
-      } catch {
-        // not critical
-      }
-    }
-    fetchPending()
-    const timer = setInterval(fetchPending, 30000)
-    return () => {
-      cancelled = true
-      clearInterval(timer)
-    }
-  }, [])
+  // Shared refunds query — keeps the sidebar badge fresh every 30s
+  // and is reused by the Dashboard without a second request.
+  const refundsQuery = useAllRefunds({ refetchInterval: 30_000 })
+  const pendingRefunds = (refundsQuery.data ?? []).filter(
+    (r) => r.status === "requested"
+  ).length
 
   function handleLogout() {
     logout()
